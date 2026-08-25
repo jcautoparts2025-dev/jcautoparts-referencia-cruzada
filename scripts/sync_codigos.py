@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import db
 import ml_client
 from codigos import (
+    eh_nome_de_marca,
     extrair_ano_range,
     extrair_codigo_ref_da_descricao,
     extrair_codigos_do_atributo_oem,
@@ -69,15 +70,16 @@ def processar_item(item, description):
     codigos_brutos = []  # (codigo_original, marca, fonte)
     if sku:
         codigos_brutos.append((sku, "JC Auto Parts", "sku"))
-    if numero_peca:
+    if numero_peca and not eh_nome_de_marca(numero_peca):
         codigos_brutos.append((numero_peca, "OEM", "numero_de_peca"))
     for codigo, marca_tok in extrair_codigos_do_atributo_oem(codigo_oem):
         codigos_brutos.append((codigo, marca_tok, "codigo_oem"))
-    ref = extrair_codigo_ref_da_descricao(texto_desc)
-    if ref:
-        codigos_brutos.append((ref, normalizar_marca(marca) or "JC Auto Parts", "codigo_ref"))
+    ref, marca_ref = extrair_codigo_ref_da_descricao(texto_desc)
+    if ref and not eh_nome_de_marca(ref):
+        codigos_brutos.append((ref, normalizar_marca(marca_ref) or "JC Auto Parts", "codigo_ref"))
     for codigo in extrair_referencias_compativeis(texto_desc):
-        codigos_brutos.append((codigo, "OEM", "referencias_compativeis"))
+        if not eh_nome_de_marca(codigo):
+            codigos_brutos.append((codigo, "OEM", "referencias_compativeis"))
 
     # Dedup por (codigo_normalizado, fonte) preservando o primeiro rótulo original.
     vistos = set()
@@ -88,6 +90,22 @@ def processar_item(item, description):
             continue
         vistos.add(chave)
         codigos_unicos.append({"codigo_original": codigo_original, "marca": marca_tok, "fonte": fonte})
+
+    # Se o mesmo código aparece numa fonte específica (marca de verdade) E
+    # numa fonte genérica ("OEM" por padrão), mantém só a específica — evita
+    # mostrar o mesmo código duas vezes com marcas diferentes quando
+    # "Número de peça"/"Referências Compatíveis" repetem um código já
+    # capturado com mais confiança em outro campo (comum em kits de reparo).
+    _FONTES_ESPECIFICAS = {"sku", "codigo_ref", "codigo_oem"}
+    codigos_especificos = {
+        normalizar_codigo(c["codigo_original"])
+        for c in codigos_unicos if c["fonte"] in _FONTES_ESPECIFICAS
+    }
+    codigos_unicos = [
+        c for c in codigos_unicos
+        if c["fonte"] in _FONTES_ESPECIFICAS
+        or normalizar_codigo(c["codigo_original"]) not in codigos_especificos
+    ]
 
     ano_inicio, ano_fim = extrair_ano_range(titulo)
     produto = {

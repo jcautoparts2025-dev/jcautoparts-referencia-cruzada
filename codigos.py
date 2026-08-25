@@ -23,6 +23,13 @@ _MARCA_ALIASES = {
 }
 
 
+def eh_nome_de_marca(codigo):
+    """True se o 'código' é na verdade só o nome de uma marca conhecida
+    (ex.: um anúncio que preencheu 'Número de peça' com 'TRW' em vez de um
+    código de verdade)."""
+    return bool(codigo) and codigo.strip().upper() in _MARCA_ALIASES
+
+
 def normalizar_marca(marca):
     """Mapeia abreviações conhecidas (ex.: 'AMP' -> 'AMPRI') para o nome
     canônico da marca. Marcas fora do dicionário voltam como vieram
@@ -44,27 +51,30 @@ def normalizar_codigo(codigo):
 
 def separar_codigo_e_marca(token):
     """Um token de 'Código OEM' pode vir como 'CODIGO' ou 'CODIGO MARCA'
-    (ex.: '15900459S TRW', 'NCD30206S NAKATA'). Primeira palavra é o código,
-    o resto (se houver) é a marca."""
+    (ex.: '15900459S TRW', 'NCD30206S NAKATA', 'CODIGO (MARCA)'). Primeira
+    palavra é o código, o resto (se houver, sem parênteses) é a marca."""
     token = token.strip()
     if not token:
         return None, None
     partes = token.split(None, 1)
     codigo = partes[0]
-    marca = partes[1].strip() if len(partes) > 1 else None
-    return codigo, marca
+    marca = partes[1].strip().strip("()").strip() if len(partes) > 1 else None
+    return codigo, (marca or None)
 
 
 def extrair_codigos_do_atributo_oem(valor):
-    """'Código OEM' vem como lista separada por vírgula. Retorna
-    [(codigo_original, marca_ou_none), ...]."""
+    """'Código OEM' vem como lista separada por vírgula (às vezes também por
+    barra). Retorna [(codigo_original, marca_ou_none), ...]. Alguns anúncios
+    preenchem esse campo só com o nome de uma marca (ex.: 'TRW') em vez de
+    um código de verdade — esses tokens são descartados."""
     if not valor:
         return []
     out = []
-    for token in valor.split(","):
-        codigo, marca = separar_codigo_e_marca(token)
-        if codigo:
-            out.append((codigo, normalizar_marca(marca) if marca else "OEM"))
+    for bruto in valor.split(","):
+        for token in bruto.split("/"):
+            codigo, marca = separar_codigo_e_marca(token)
+            if codigo and not eh_nome_de_marca(codigo):
+                out.append((codigo, normalizar_marca(marca) if marca else "OEM"))
     return out
 
 
@@ -81,7 +91,11 @@ def extrair_ano_range(titulo):
     return min(anos), max(anos)
 
 
-_RE_CODIGO_REF = re.compile(r"C[oó]digo\s+Ref\.?:?\s*([A-Za-z0-9][A-Za-z0-9.\-/]*)", re.IGNORECASE)
+_RE_CODIGO_REF = re.compile(
+    r"C[oó]digo\s+Ref\.?:?\s*([A-Za-z0-9][A-Za-z0-9.\-/]*)"
+    r"(?:\s*\n\s*Marca:\s*(.+))?",
+    re.IGNORECASE,
+)
 _RE_REFERENCIAS_SECAO = re.compile(
     r"Refer[êe]ncias\s+Compat[íi]veis:?\s*\n((?:.+\n?)+?)(?:\n\s*\n|\Z)",
     re.IGNORECASE,
@@ -89,11 +103,19 @@ _RE_REFERENCIAS_SECAO = re.compile(
 
 
 def extrair_codigo_ref_da_descricao(texto):
-    """Procura 'Código Ref.: XXXX' no corpo da descrição (texto livre)."""
+    """Procura 'Código Ref.: XXXX' (e, se houver logo abaixo, 'Marca: YYYY')
+    no corpo da descrição (texto livre). Retorna (codigo, marca_ou_none) —
+    a marca daqui é mais confiável que o atributo "Marca" do item, que às
+    vezes descreve o sistema original (ex.: "TRW") em vez da marca do kit
+    de reparo em si."""
     if not texto:
-        return None
+        return None, None
     m = _RE_CODIGO_REF.search(texto)
-    return m.group(1).strip() if m else None
+    if not m:
+        return None, None
+    codigo = m.group(1).strip()
+    marca = m.group(2).strip() if m.group(2) else None
+    return codigo, marca
 
 
 def extrair_referencias_compativeis(texto):
