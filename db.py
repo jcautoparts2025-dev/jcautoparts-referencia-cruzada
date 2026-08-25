@@ -106,6 +106,13 @@ def init_schema():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS consultas_placa_cache (
+                placa           TEXT PRIMARY KEY,
+                resposta_json   TEXT,
+                consultado_em   TEXT
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS credentials (
                 chave   TEXT PRIMARY KEY,
                 valor   TEXT
@@ -283,6 +290,34 @@ def salvar_cache_ia(codigo_normalizado, codigo_pesquisado, resposta):
             "consultado_em = excluded.consultado_em",
             [codigo_normalizado, codigo_pesquisado, json.dumps(resposta, ensure_ascii=False),
              datetime.utcnow().isoformat()],
+        )
+    finally:
+        conn.close()
+
+
+def get_cache_placa(placa):
+    """Sem expiração — placa/veículo raramente muda de dono ou dados, e cada
+    consulta nova custa dinheiro na API de terceiros. Use `forcar=True` na
+    UI (recadastramento, venda do carro etc.) para ignorar o cache."""
+    conn = get_connection()
+    try:
+        rs = conn.execute(
+            "SELECT resposta_json FROM consultas_placa_cache WHERE placa = ?", [placa]
+        )
+        return json.loads(rs.rows[0][0]) if rs.rows else None
+    finally:
+        conn.close()
+
+
+def salvar_cache_placa(placa, resposta):
+    conn = get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO consultas_placa_cache (placa, resposta_json, consultado_em) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(placa) DO UPDATE SET "
+            "resposta_json = excluded.resposta_json, consultado_em = excluded.consultado_em",
+            [placa, json.dumps(resposta, ensure_ascii=False), datetime.utcnow().isoformat()],
         )
     finally:
         conn.close()

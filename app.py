@@ -4,6 +4,7 @@ import db
 from ai_lookup import BuscaIAIndisponivel, pesquisar_codigo_via_ia
 from codigos import normalizar_codigo
 from config import APP_ICON, APP_TITLE
+from placa_client import ConsultaPlacaIndisponivel, consultar_placa, normalizar_placa
 
 st.set_page_config(page_title=APP_TITLE, page_icon=APP_ICON, layout="centered")
 
@@ -15,6 +16,12 @@ if "resultado_ia_codigo" not in st.session_state:
     st.session_state.resultado_ia_codigo = None
 if "resultado_ia_do_cache" not in st.session_state:
     st.session_state.resultado_ia_do_cache = False
+if "resultado_placa" not in st.session_state:
+    st.session_state.resultado_placa = None
+if "resultado_placa_valor" not in st.session_state:
+    st.session_state.resultado_placa_valor = None
+if "resultado_placa_do_cache" not in st.session_state:
+    st.session_state.resultado_placa_do_cache = False
 
 
 def _render_produto(produto):
@@ -35,7 +42,7 @@ def _render_produto(produto):
                     st.write(f"- {c['codigo_original']}{marca}")
 
 
-aba_codigo, aba_veiculo = st.tabs(["🔎 Por código", "🚗 Por veículo"])
+aba_codigo, aba_veiculo, aba_placa = st.tabs(["🔎 Por código", "🚗 Por veículo", "🚙 Por placa"])
 
 with aba_codigo:
     st.caption(
@@ -141,6 +148,60 @@ with aba_veiculo:
                     "Nenhum item do seu catálogo encontrado para esse veículo"
                     + (" nesse ano" if ano else "") + "."
                 )
+
+with aba_placa:
+    st.caption(
+        "Digite a placa do veículo (Mercosul AAA0X00 ou antiga AAA9999) para identificar o "
+        "carro e ver as peças do seu catálogo compatíveis. Cada consulta nova é paga — "
+        "resultados já consultados ficam salvos e não geram custo de novo."
+    )
+    placa_input = st.text_input("Placa", placeholder="Ex.: ABC1D23")
+
+    if placa_input:
+        placa_norm = normalizar_placa(placa_input)
+
+        consultar = st.button("🚙 Consultar placa")
+        forcar_placa = False
+        if st.session_state.resultado_placa_valor == placa_norm and st.session_state.resultado_placa is not None:
+            forcar_placa = st.button("🔄 Forçar nova consulta (paga)")
+
+        if consultar or forcar_placa:
+            with st.spinner("Consultando placa..."):
+                try:
+                    dados, veio_do_cache = consultar_placa(placa_input, forcar=forcar_placa)
+                    st.session_state.resultado_placa = dados
+                    st.session_state.resultado_placa_valor = placa_norm
+                    st.session_state.resultado_placa_do_cache = veio_do_cache
+                except ConsultaPlacaIndisponivel as e:
+                    st.session_state.resultado_placa = None
+                    st.error(f"Consulta de placa indisponível: {e}")
+
+        dados_placa = (
+            st.session_state.resultado_placa
+            if st.session_state.resultado_placa_valor == placa_norm
+            else None
+        )
+        if dados_placa:
+            if st.session_state.resultado_placa_do_cache:
+                st.caption("📦 Resultado em cache (consultado anteriormente, sem custo extra).")
+
+            marca = dados_placa.get("marca") or dados_placa.get("MARCA") or ""
+            modelo = dados_placa.get("modelo") or dados_placa.get("MODELO") or ""
+            ano_texto_placa = str(dados_placa.get("anoModelo") or dados_placa.get("ano") or "").strip()
+            ano_placa = int(ano_texto_placa) if ano_texto_placa.isdigit() else None
+
+            st.success(f"🚗 {marca} {modelo}" + (f" ({ano_placa})" if ano_placa else ""))
+
+            if modelo:
+                produtos_placa = db.buscar_por_veiculo(modelo, ano=ano_placa)
+                if produtos_placa:
+                    st.success(f"🎯 {len(produtos_placa)} item(ns) do seu catálogo compatível(is):")
+                    for p in produtos_placa:
+                        _render_produto(p)
+                else:
+                    st.warning("Nenhum item do seu catálogo encontrado para esse veículo.")
+            else:
+                st.warning("A consulta não retornou o modelo do veículo.")
 
 st.divider()
 try:

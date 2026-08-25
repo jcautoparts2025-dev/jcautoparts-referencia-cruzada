@@ -1,7 +1,8 @@
 # Referência Cruzada de Peças — JC Auto Parts
 
-Dashboard para achar, a partir de um código OEM, de fabricante/marca ou do
-próprio SKU, quais peças do catálogo (Mercado Livre) da JC Auto Parts atendem.
+Dashboard para achar, a partir de um código OEM/marca/SKU, do nome+ano do
+veículo, ou da placa, quais peças do catálogo (Mercado Livre) da JC Auto Parts
+atendem.
 
 ## Como funciona
 
@@ -15,6 +16,16 @@ próprio SKU, quais peças do catálogo (Mercado Livre) da JC Auto Parts atendem
    fabricantes e marcas conhecidas. Os códigos equivalentes encontrados são
    re-checados contra o índice local. Resultado fica em cache no Turso por
    `IA_CACHE_DIAS` (ver `config.py`).
+3. **Busca por veículo** (aba "Por veículo"): busca `produtos.titulo` por
+   nome/modelo do carro, com filtro opcional de ano usando `ano_inicio`/
+   `ano_fim` (extraídos do título pelo sync, ver `codigos.extrair_ano_range`).
+4. **Busca por placa** (aba "Por placa", `placa_client.py`): consulta a API
+   Placas (apiplacas.com.br, backend WDAPI2 — serviço pago de terceiro) para
+   descobrir marca/modelo/ano a partir da placa, e reaproveita a busca por
+   veículo acima. Resultado cacheado no Turso (`consultas_placa_cache`), sem
+   expiração — cada consulta nova custa dinheiro, então nunca paga duas vezes
+   pela mesma placa a menos que o usuário force (dados do veículo raramente
+   mudam).
 
 ## Setup local
 
@@ -36,6 +47,7 @@ versionado) ou os arquivos locais de fallback (`~/.turso_credentials/...`,
 | `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` | Banco Turso deste projeto |
 | `ML_CLIENT_ID` / `ML_CLIENT_SECRET` / `ML_REFRESH_TOKEN` / `ML_USER_ID` | App OAuth do ML já existente (somente leitura) — o refresh token só é usado para semear a tabela `credentials` no Turso na primeira sincronização; depois disso ele roda e se persiste sozinho lá, sem tocar em nenhum arquivo local |
 | `ANTHROPIC_API_KEY` | Conta Anthropic — precisa ter crédito carregado para a busca por IA funcionar |
+| `APIPLACAS_TOKEN` | Conta em apiplacas.com.br (pago, ~R$0,03/consulta via PIX) — só necessário na busca por placa; sem ele essa aba mostra um erro amigável, o resto do app funciona normal |
 
 ## Sync automático
 
