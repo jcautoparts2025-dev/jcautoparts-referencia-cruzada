@@ -113,6 +113,32 @@ def init_schema():
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS referencia_externa_produtos (
+                fonte           TEXT NOT NULL,
+                produto_id      TEXT NOT NULL,
+                titulo          TEXT,
+                aplicacao       TEXT,
+                marca_item      TEXT,
+                link            TEXT,
+                categoria       TEXT,
+                ano_inicio      INTEGER,
+                ano_fim         INTEGER,
+                coletado_em     TEXT,
+                PRIMARY KEY (fonte, produto_id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS referencia_externa_codigos (
+                codigo_normalizado TEXT NOT NULL,
+                fonte               TEXT NOT NULL,
+                produto_id          TEXT NOT NULL,
+                codigo_original     TEXT NOT NULL,
+                marca               TEXT,
+                PRIMARY KEY (codigo_normalizado, fonte, produto_id, codigo_original)
+            )
+            """,
+            "CREATE INDEX IF NOT EXISTS idx_ref_externa_codigos_norm ON referencia_externa_codigos(codigo_normalizado)",
+            """
             CREATE TABLE IF NOT EXISTS credentials (
                 chave   TEXT PRIMARY KEY,
                 valor   TEXT
@@ -157,6 +183,67 @@ def substituir_catalogo(produtos, codigos):
                 [c["codigo_normalizado"], c["mlb_id"], c["codigo_original"], c.get("marca"), c.get("fonte")],
             ))
         conn.batch(stmts)
+    finally:
+        conn.close()
+
+
+def substituir_referencia_externa(fonte, produtos, codigos):
+    """Regrava (só dessa `fonte`) as tabelas referencia_externa_produtos/
+    referencia_externa_codigos do zero — usado pelos scripts de scraping
+    (ex.: scripts/scrape_camilloparts.py). Não mexe em outras fontes.
+    produtos: [{produto_id, titulo, aplicacao, marca_item, link, categoria, ano_inicio, ano_fim}]
+    codigos:  [{codigo_normalizado, produto_id, codigo_original, marca}]
+    """
+    conn = get_connection()
+    try:
+        agora = datetime.utcnow().isoformat()
+        stmts = [
+            ("DELETE FROM referencia_externa_codigos WHERE fonte = ?", [fonte]),
+            ("DELETE FROM referencia_externa_produtos WHERE fonte = ?", [fonte]),
+        ]
+        for p in produtos:
+            stmts.append((
+                """INSERT INTO referencia_externa_produtos
+                   (fonte, produto_id, titulo, aplicacao, marca_item, link, categoria, ano_inicio, ano_fim, coletado_em)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [fonte, p["produto_id"], p.get("titulo"), p.get("aplicacao"), p.get("marca_item"),
+                 p.get("link"), p.get("categoria"), p.get("ano_inicio"), p.get("ano_fim"), agora],
+            ))
+        for c in codigos:
+            stmts.append((
+                """INSERT OR IGNORE INTO referencia_externa_codigos
+                   (codigo_normalizado, fonte, produto_id, codigo_original, marca)
+                   VALUES (?, ?, ?, ?, ?)""",
+                [c["codigo_normalizado"], fonte, c["produto_id"], c["codigo_original"], c.get("marca")],
+            ))
+        conn.batch(stmts)
+    finally:
+        conn.close()
+
+
+def buscar_referencia_externa_por_codigo(codigo_normalizado):
+    conn = get_connection()
+    try:
+        rs = conn.execute(
+            "SELECT DISTINCT fonte, produto_id FROM referencia_externa_codigos WHERE codigo_normalizado = ?",
+            [codigo_normalizado],
+        )
+        pares = [(row[0], row[1]) for row in rs.rows]
+        resultados = []
+        for fonte, produto_id in pares:
+            rs2 = conn.execute(
+                "SELECT titulo, aplicacao, marca_item, link, categoria, ano_inicio, ano_fim "
+                "FROM referencia_externa_produtos WHERE fonte = ? AND produto_id = ?",
+                [fonte, produto_id],
+            )
+            if rs2.rows:
+                row = rs2.rows[0]
+                resultados.append({
+                    "fonte": fonte, "produto_id": produto_id, "titulo": row[0], "aplicacao": row[1],
+                    "marca_item": row[2], "link": row[3], "categoria": row[4],
+                    "ano_inicio": row[5], "ano_fim": row[6],
+                })
+        return resultados
     finally:
         conn.close()
 
