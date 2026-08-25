@@ -1,7 +1,7 @@
 import streamlit as st
 
 import db
-from ai_lookup import BuscaIAIndisponivel, pesquisar_codigo_via_ia
+from ai_lookup import BuscaIAIndisponivel, identificar_marcas_codigos, pesquisar_codigo_via_ia
 from codigos import normalizar_codigo
 from config import APP_ICON, APP_TITLE
 from placa_client import ConsultaPlacaIndisponivel, consultar_placa, normalizar_placa
@@ -143,6 +143,36 @@ def _render_produto(produto):
                     col_codigo.code(c["codigo_original"], language=None)
                     if c.get("marca"):
                         col_marca.badge(c["marca"], color=_cor_marca(c["marca"]))
+
+                nao_confirmados = [
+                    c for c in codigos
+                    if not c.get("ia_classificado") and c.get("marca") in (None, "OEM")
+                ]
+                if nao_confirmados:
+                    st.caption(
+                        f"{len(nao_confirmados)} código(s) marcado(s) só como \"OEM\" — "
+                        "identifique a marca de reposição real com IA."
+                    )
+                    if st.button(
+                        "Identificar marcas com IA",
+                        key=f"identificar_marcas_{produto['mlb_id']}",
+                    ):
+                        with st.spinner("Identificando marcas..."):
+                            try:
+                                classificacoes = identificar_marcas_codigos(
+                                    produto["titulo"],
+                                    [c["codigo_original"] for c in nao_confirmados],
+                                )
+                                codigos_atualizados = []
+                                for c in codigos:
+                                    nova_marca = classificacoes.get(c["codigo_original"])
+                                    if nova_marca and not c.get("ia_classificado") and c.get("marca") in (None, "OEM"):
+                                        c = {**c, "marca": nova_marca, "ia_classificado": True}
+                                    codigos_atualizados.append(c)
+                                db.atualizar_codigos_produto(produto["mlb_id"], codigos_atualizados)
+                                st.rerun()
+                            except BuscaIAIndisponivel as e:
+                                st.error(f"Identificação por IA indisponível: {e}")
 
 
 aba_codigo, aba_veiculo, aba_placa = st.tabs(["Por código", "Por veículo", "Por placa"])

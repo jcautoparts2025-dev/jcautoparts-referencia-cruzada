@@ -6,7 +6,7 @@ import json
 import anthropic
 
 import db
-from codigos import normalizar_codigo
+from codigos import MARCAS_CONHECIDAS, normalizar_codigo
 from config import IA_CACHE_DIAS, MARCAS_PRIORITARIAS
 
 _JSON_SCHEMA = {
@@ -57,6 +57,37 @@ def _client():
     return anthropic.Anthropic(api_key=api_key)
 
 
+def _chamar_claude(prompt, schema, max_tokens=16000):
+    """Wrapper comum: chama a Claude com web search + saída estruturada,
+    convertendo os erros da API em BuscaIAIndisponivel (mensagem amigável)."""
+    client = _client()
+    try:
+        response = client.messages.create(
+            model="claude-opus-5",
+            max_tokens=max_tokens,
+            tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}],
+            output_config={"format": {"type": "json_schema", "schema": schema}, "effort": "high"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.AuthenticationError as e:
+        raise BuscaIAIndisponivel(
+            "Chave da API da Claude inválida ou sem crédito carregado na conta Anthropic."
+        ) from e
+    except anthropic.PermissionDeniedError as e:
+        raise BuscaIAIndisponivel("A chave da API da Claude não tem permissão para este recurso.") from e
+    except anthropic.RateLimitError as e:
+        raise BuscaIAIndisponivel("Limite de requisições da API da Claude atingido — tente novamente em instantes.") from e
+    except anthropic.APIStatusError as e:
+        raise BuscaIAIndisponivel(f"Erro na API da Claude ({e.status_code}): {e.message}") from e
+    except anthropic.APIConnectionError as e:
+        raise BuscaIAIndisponivel("Não foi possível conectar à API da Claude — verifique a conexão.") from e
+
+    texto = next((b.text for b in response.content if b.type == "text"), None)
+    if texto is None:
+        raise BuscaIAIndisponivel("A IA não retornou um resultado de texto válido.")
+    return json.loads(texto)
+
+
 def _montar_prompt(codigo):
     marcas = ", ".join(MARCAS_PRIORITARIAS)
     return (
@@ -81,32 +112,54 @@ def pesquisar_codigo_via_ia(codigo, forcar=False):
         if cache is not None:
             return cache, True
 
-    client = _client()
-    try:
-        response = client.messages.create(
-            model="claude-opus-5",
-            max_tokens=16000,
-            tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 5}],
-            output_config={"format": {"type": "json_schema", "schema": _JSON_SCHEMA}, "effort": "high"},
-            messages=[{"role": "user", "content": _montar_prompt(codigo)}],
-        )
-    except anthropic.AuthenticationError as e:
-        raise BuscaIAIndisponivel(
-            "Chave da API da Claude inválida ou sem crédito carregado na conta Anthropic."
-        ) from e
-    except anthropic.PermissionDeniedError as e:
-        raise BuscaIAIndisponivel("A chave da API da Claude não tem permissão para este recurso.") from e
-    except anthropic.RateLimitError as e:
-        raise BuscaIAIndisponivel("Limite de requisições da API da Claude atingido — tente novamente em instantes.") from e
-    except anthropic.APIStatusError as e:
-        raise BuscaIAIndisponivel(f"Erro na API da Claude ({e.status_code}): {e.message}") from e
-    except anthropic.APIConnectionError as e:
-        raise BuscaIAIndisponivel("Não foi possível conectar à API da Claude — verifique a conexão.") from e
-
-    texto = next((b.text for b in response.content if b.type == "text"), None)
-    if texto is None:
-        raise BuscaIAIndisponivel("A IA não retornou um resultado de texto válido.")
-
-    resultado = json.loads(texto)
+    resultado = _chamar_claude(_montar_prompt(codigo), _JSON_SCHEMA)
     db.salvar_cache_ia(codigo_norm, codigo, resultado)
     return resultado, False
+
+
+_MARCAS_ENUM = MARCAS_CONHECIDAS + ["OEM", "Desconhecida"]
+
+_CLASSIFICACAO_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "classificacoes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "codigo": {"type": "string"},
+                    "marca": {"type": "string", "enum": _MARCAS_ENUM},
+                },
+                "required": ["codigo", "marca"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["classificacoes"],
+    "additionalProperties": False,
+}
+
+
+def _montar_prompt_classificacao(titulo, codigos):
+    marcas = ", ".join(MARCAS_CONHECIDAS)
+    lista = "\n".join(f"- {c}" for c in codigos)
+    return (
+        f"Você está identificando a marca de códigos de referência de uma autopeça do "
+        f"mercado brasileiro anunciada como \"{titulo}\". Para cada código abaixo, "
+        f"pesquise e identifique a qual marca de reposição ele pertence, priorizando "
+        f"estas marcas conhecidas do setor: {marcas}. Se o código for o número de peça "
+        "original da montadora (não de nenhuma marca de reposição), classifique como "
+        "\"OEM\". Se pesquisar e não conseguir identificar com confiança razoável, "
+        "classifique como \"Desconhecida\" em vez de chutar.\n\nCódigos:\n" + lista
+    )
+
+
+def identificar_marcas_codigos(titulo, codigos):
+    """codigos: lista de strings (códigos originais, como aparecem no anúncio).
+    Retorna dict {codigo_original: marca}. Lança BuscaIAIndisponivel em caso
+    de erro tratável. Não usa cache próprio — quem chama é responsável por
+    persistir o resultado (ver db.atualizar_codigos_produto)."""
+    if not codigos:
+        return {}
+    resultado = _chamar_claude(_montar_prompt_classificacao(titulo, codigos), _CLASSIFICACAO_SCHEMA, max_tokens=8000)
+    return {c["codigo"]: c["marca"] for c in resultado.get("classificacoes", [])}

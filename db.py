@@ -182,6 +182,26 @@ def set_credential(chave, valor):
         conn.close()
 
 
+def atualizar_codigos_produto(mlb_id, codigos):
+    """Sobrescreve a lista de códigos (com marca) de um produto — usado pelo
+    app.py depois de uma classificação de marca via IA
+    (ai_lookup.identificar_marcas_codigos). Atualiza tanto produtos.codigos_json
+    (o que a UI lê) quanto codigos_index.marca, pra manter os dois consistentes."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE produtos SET codigos_json = ? WHERE mlb_id = ?",
+            [json.dumps(codigos, ensure_ascii=False), mlb_id],
+        )
+        for c in codigos:
+            conn.execute(
+                "UPDATE codigos_index SET marca = ? WHERE mlb_id = ? AND codigo_original = ?",
+                [c.get("marca"), mlb_id, c["codigo_original"]],
+            )
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # Leitura (usada pelo app.py)
 # ---------------------------------------------------------------------------

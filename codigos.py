@@ -22,6 +22,11 @@ _MARCA_ALIASES = {
     "AMP": "AMPRI",
 }
 
+# As marcas de reposição mais comuns do setor, na ordem pedida pelo usuário —
+# usado tanto na normalização acima quanto no prompt de classificação por IA
+# (ai_lookup.identificar_marcas_codigos).
+MARCAS_CONHECIDAS = ["TRW", "NAKATA", "COFAP", "MONROE", "AXIOS", "PERFECT", "INDISA", "AMPRI"]
+
 
 def eh_nome_de_marca(codigo):
     """True se o 'código' é na verdade só o nome de uma marca conhecida
