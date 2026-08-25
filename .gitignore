@@ -1,0 +1,12 @@
+.env
+.env.*
+secrets.toml
+.streamlit/secrets.toml
+*credentials*
+*.db
+*.db-wal
+*.db-shm
+__pycache__/
+*.pyc
+.venv/
+venv/

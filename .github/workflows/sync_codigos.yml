@@ -1,0 +1,36 @@
+name: Sync índice de códigos
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # 1x/dia, 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Guard — bloqueia chamadas de escrita à API do Mercado Livre
+        run: |
+          if grep -rEn "requests\.(put|post|delete|patch)\s*\(" --include="*.py" ml_client.py scripts/; then
+            echo "::error::Encontrada chamada de escrita à API do ML — este projeto é somente leitura."
+            exit 1
+          fi
+
+      - name: Instala dependências
+        run: pip install -r requirements.txt
+
+      - name: Roda sync
+        env:
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          ML_CLIENT_ID: ${{ secrets.ML_CLIENT_ID }}
+          ML_CLIENT_SECRET: ${{ secrets.ML_CLIENT_SECRET }}
+          ML_REFRESH_TOKEN: ${{ secrets.ML_REFRESH_TOKEN }}
+          ML_USER_ID: ${{ secrets.ML_USER_ID }}
+        run: python scripts/sync_codigos.py

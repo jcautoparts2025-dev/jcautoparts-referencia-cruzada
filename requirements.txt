@@ -1,0 +1,4 @@
+streamlit>=1.50
+libsql-client>=0.3.1
+requests>=2.31
+anthropic>=0.130.0
