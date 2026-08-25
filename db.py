@@ -61,6 +61,13 @@ def get_connection():
     return libsql_client.create_client_sync(url=url, auth_token=token)
 
 
+def _ensure_column(conn, table, column, coldef):
+    rs = conn.execute(f"PRAGMA table_info({table})")
+    existentes = {row[1] for row in rs.rows}
+    if column not in existentes:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coldef}")
+
+
 def init_schema():
     conn = get_connection()
     try:
@@ -74,6 +81,8 @@ def init_schema():
                 marca           TEXT,
                 link            TEXT,
                 codigos_json    TEXT,
+                ano_inicio      INTEGER,
+                ano_fim         INTEGER,
                 atualizado_em   TEXT
             )
             """,
@@ -103,6 +112,9 @@ def init_schema():
             )
             """,
         ])
+        # Colunas adicionadas depois da criação inicial da tabela em produção.
+        _ensure_column(conn, "produtos", "ano_inicio", "INTEGER")
+        _ensure_column(conn, "produtos", "ano_fim", "INTEGER")
     finally:
         conn.close()
 
@@ -114,7 +126,7 @@ def init_schema():
 def substituir_catalogo(produtos, codigos):
     """Regrava as tabelas produtos/codigos_index do zero a partir de uma
     lista completa nova (mesma filosofia do refresh do catálogo).
-    produtos: [{mlb_id, sku, titulo, categoria, marca, link, codigos_json}]
+    produtos: [{mlb_id, sku, titulo, categoria, marca, link, codigos_json, ano_inicio, ano_fim}]
     codigos:  [{codigo_normalizado, mlb_id, codigo_original, marca, fonte}]
     """
     conn = get_connection()
@@ -124,11 +136,11 @@ def substituir_catalogo(produtos, codigos):
         for p in produtos:
             stmts.append((
                 """INSERT INTO produtos
-                   (mlb_id, sku, titulo, categoria, marca, link, codigos_json, atualizado_em)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (mlb_id, sku, titulo, categoria, marca, link, codigos_json, ano_inicio, ano_fim, atualizado_em)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [p["mlb_id"], p.get("sku"), p.get("titulo"), p.get("categoria"),
                  p.get("marca"), p.get("link"), json.dumps(p.get("codigos", []), ensure_ascii=False),
-                 agora],
+                 p.get("ano_inicio"), p.get("ano_fim"), agora],
             ))
         for c in codigos:
             stmts.append((
@@ -190,6 +202,39 @@ def buscar_por_codigo(codigo_normalizado):
                 "mlb_id": row[0], "sku": row[1], "titulo": row[2], "categoria": row[3],
                 "marca": row[4], "link": row[5],
                 "codigos": json.loads(row[6]) if row[6] else [],
+            })
+        return produtos
+    finally:
+        conn.close()
+
+
+def buscar_por_veiculo(nome_veiculo, ano=None):
+    """Retorna produtos cujo título contém `nome_veiculo` (case-insensitive,
+    acento-insensível não é feito aqui) e, se `ano` for informado, cujo
+    ano_inicio/ano_fim (extraídos do título) cobrem esse ano — itens sem ano
+    reconhecido no título ainda entram, já que não dá pra descartar por ano
+    sem saber o ano do item."""
+    conn = get_connection()
+    try:
+        rs = conn.execute(
+            "SELECT mlb_id, sku, titulo, categoria, marca, link, codigos_json, ano_inicio, ano_fim "
+            "FROM produtos"
+        )
+        termo = nome_veiculo.strip().lower()
+        produtos = []
+        for row in rs.rows:
+            titulo = row[2] or ""
+            if termo not in titulo.lower():
+                continue
+            ano_inicio, ano_fim = row[7], row[8]
+            if ano is not None and ano_inicio is not None and ano_fim is not None:
+                if not (ano_inicio <= ano <= ano_fim):
+                    continue
+            produtos.append({
+                "mlb_id": row[0], "sku": row[1], "titulo": row[2], "categoria": row[3],
+                "marca": row[4], "link": row[5],
+                "codigos": json.loads(row[6]) if row[6] else [],
+                "ano_inicio": ano_inicio, "ano_fim": ano_fim,
             })
         return produtos
     finally:

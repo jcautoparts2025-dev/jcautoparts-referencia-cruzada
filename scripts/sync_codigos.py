@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import db
 import ml_client
 from codigos import (
+    extrair_ano_range,
     extrair_codigo_ref_da_descricao,
     extrair_codigos_do_atributo_oem,
     extrair_referencias_compativeis,
@@ -80,6 +81,7 @@ def processar_item(item, description):
         vistos.add(chave)
         codigos_unicos.append({"codigo_original": codigo_original, "marca": marca_tok, "fonte": fonte})
 
+    ano_inicio, ano_fim = extrair_ano_range(titulo)
     produto = {
         "mlb_id": mlb_id,
         "sku": sku,
@@ -88,6 +90,8 @@ def processar_item(item, description):
         "marca": marca,
         "link": item.get("permalink"),
         "codigos": codigos_unicos,
+        "ano_inicio": ano_inicio,
+        "ano_fim": ano_fim,
     }
     codigos_index = [
         {

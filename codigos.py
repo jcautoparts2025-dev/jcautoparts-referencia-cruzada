@@ -38,6 +38,19 @@ def extrair_codigos_do_atributo_oem(valor):
     return out
 
 
+_RE_ANO = re.compile(r"(19|20)\d{2}")
+
+
+def extrair_ano_range(titulo):
+    """Acha todo ano de 4 dígitos plausível (1960-2035) no título e devolve
+    (ano_inicio, ano_fim) = (min, max). (None, None) se não achar nenhum."""
+    anos = [int(m.group(0)) for m in _RE_ANO.finditer(titulo or "")]
+    anos = [a for a in anos if 1960 <= a <= 2035]
+    if not anos:
+        return None, None
+    return min(anos), max(anos)
+
+
 _RE_CODIGO_REF = re.compile(r"C[oó]digo\s+Ref\.?:?\s*([A-Za-z0-9][A-Za-z0-9.\-/]*)", re.IGNORECASE)
 _RE_REFERENCIAS_SECAO = re.compile(
     r"Refer[êe]ncias\s+Compat[íi]veis:?\s*\n((?:.+\n?)+?)(?:\n\s*\n|\Z)",
