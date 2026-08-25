@@ -4,6 +4,36 @@ import re
 
 _SEPARADORES = re.compile(r"[\s.\-/_]")
 
+# Aliases conhecidos -> nome canônico das marcas mais comuns do setor.
+# Mantém qualquer marca fora dessa lista como está (ex.: XINTEC, JTEKT, ZF)
+# em vez de forçar num rótulo genérico.
+_MARCA_ALIASES = {
+    "TRW": "TRW",
+    "TRW AUTOMOTIVE": "TRW",
+    "NAKATA": "NAKATA",
+    "NAKATA AUTOMOTIVA": "NAKATA",
+    "COFAP": "COFAP",
+    "MONROE": "MONROE",
+    "MONROE AXIOS": "MONROE",
+    "AXIOS": "AXIOS",
+    "PERFECT": "PERFECT",
+    "INDISA": "INDISA",
+    "AMPRI": "AMPRI",
+    "AMP": "AMPRI",
+}
+
+
+def normalizar_marca(marca):
+    """Mapeia abreviações conhecidas (ex.: 'AMP' -> 'AMPRI') para o nome
+    canônico da marca. Marcas fora do dicionário voltam como vieram
+    (title-case), sem forçar num rótulo genérico."""
+    if not marca:
+        return None
+    chave = marca.strip().upper()
+    if chave in _MARCA_ALIASES:
+        return _MARCA_ALIASES[chave]
+    return marca.strip()
+
 
 def normalizar_codigo(codigo):
     """Chave de busca: maiúsculas, sem espaço/ponto/hífen/barra/underscore."""
@@ -34,7 +64,7 @@ def extrair_codigos_do_atributo_oem(valor):
     for token in valor.split(","):
         codigo, marca = separar_codigo_e_marca(token)
         if codigo:
-            out.append((codigo, marca))
+            out.append((codigo, normalizar_marca(marca) if marca else "OEM"))
     return out
 
 
@@ -68,11 +98,17 @@ def extrair_codigo_ref_da_descricao(texto):
 
 def extrair_referencias_compativeis(texto):
     """Procura uma seção 'Referências Compatíveis:' e devolve a lista de
-    códigos (uma por linha) dentro dela."""
+    códigos dentro dela — um por linha, ou vários por linha separados por
+    vírgula (os dois formatos aparecem nos anúncios reais)."""
     if not texto:
         return []
     m = _RE_REFERENCIAS_SECAO.search(texto)
     if not m:
         return []
-    linhas = [l.strip("•- \t") for l in m.group(1).splitlines()]
-    return [l for l in linhas if l]
+    codigos = []
+    for linha in m.group(1).splitlines():
+        linha = linha.strip("•- \t")
+        if not linha:
+            continue
+        codigos.extend(c.strip() for c in linha.split(",") if c.strip())
+    return codigos

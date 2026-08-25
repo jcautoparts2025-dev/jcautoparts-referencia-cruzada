@@ -16,6 +16,7 @@ from codigos import (
     extrair_codigos_do_atributo_oem,
     extrair_referencias_compativeis,
     normalizar_codigo,
+    normalizar_marca,
 )
 
 _REGRAS_CATEGORIA = [
@@ -58,18 +59,25 @@ def processar_item(item, description):
     codigo_oem = _attr(attributes, "Código OEM")
     texto_desc = description.get("plain_text", "") or ""
 
+    # Nota sobre atribuição de marca: "Marca" é a marca do produto anunciado
+    # (o fabricante do reparo/peça de reposição), mas "Número de peça" e
+    # "Referências Compatíveis" quase sempre trazem o código ORIGINAL da
+    # montadora (OEM), não o código do produto vendido — confirmado num caso
+    # real (Marca=XINTEC, Número de peça=1S0407151, que é literalmente o
+    # código OEM da VW). Por isso essas duas fontes são marcadas "OEM" por
+    # padrão, e só "Código OEM"/"Código Ref." usam a marca de fato.
     codigos_brutos = []  # (codigo_original, marca, fonte)
     if sku:
         codigos_brutos.append((sku, "JC Auto Parts", "sku"))
     if numero_peca:
-        codigos_brutos.append((numero_peca, marca, "numero_de_peca"))
+        codigos_brutos.append((numero_peca, "OEM", "numero_de_peca"))
     for codigo, marca_tok in extrair_codigos_do_atributo_oem(codigo_oem):
-        codigos_brutos.append((codigo, marca_tok or marca, "codigo_oem"))
+        codigos_brutos.append((codigo, marca_tok, "codigo_oem"))
     ref = extrair_codigo_ref_da_descricao(texto_desc)
     if ref:
-        codigos_brutos.append((ref, marca, "codigo_ref"))
+        codigos_brutos.append((ref, normalizar_marca(marca) or "JC Auto Parts", "codigo_ref"))
     for codigo in extrair_referencias_compativeis(texto_desc):
-        codigos_brutos.append((codigo, marca, "referencias_compativeis"))
+        codigos_brutos.append((codigo, "OEM", "referencias_compativeis"))
 
     # Dedup por (codigo_normalizado, fonte) preservando o primeiro rótulo original.
     vistos = set()
